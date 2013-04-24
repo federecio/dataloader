@@ -154,13 +154,17 @@ class BulkApiVisitorUtil {
     }
 
     private void awaitJobCompletion() throws AsyncApiException {
-        long sleepTime = periodicCheckStatus();
-        while (this.jobInfo.getNumberBatchesQueued() > 0 || this.jobInfo.getNumberBatchesInProgress() > 0) {
-            if (this.monitor.isCanceled()) return;
+        periodicCheckStatus();
+        while (jobInfo.getNumberBatchesQueued() > 0 || jobInfo.getNumberBatchesInProgress() > 0) {
+            if (this.monitor.isCanceled()) {
+                return;
+            }
+            periodicCheckStatus();
             try {
-                Thread.sleep(sleepTime);
-            } catch (final InterruptedException e) {}
-            sleepTime = periodicCheckStatus();
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
