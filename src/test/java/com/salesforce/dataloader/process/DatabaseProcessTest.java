@@ -25,6 +25,23 @@
  */
 package com.salesforce.dataloader.process;
 
+import java.io.File;
+import java.text.ParseException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.log4j.Logger;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
 import com.salesforce.dataloader.TestSetting;
 import com.salesforce.dataloader.TestVariant;
 import com.salesforce.dataloader.action.OperationInfo;
@@ -38,22 +55,6 @@ import com.salesforce.dataloader.exception.DataAccessObjectInitializationExcepti
 import com.salesforce.dataloader.exception.ParameterLoadException;
 import com.salesforce.dataloader.exception.ProcessInitializationException;
 import com.salesforce.dataloader.model.Row;
-import org.apache.log4j.Logger;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.io.File;
-import java.text.ParseException;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -142,21 +143,6 @@ public class DatabaseProcessTest extends ProcessTestBase {
         testUpsertAccountsDb(argMap, NUM_ROWS, true, false);
         // update
         testUpsertAccountsDb(argMap, NUM_ROWS, false, false);
-    }
-
-    @Test
-    public void testMaximumBatchRowsDb() throws Exception {
-        final int numRows = isBulkAPIEnabled(getTestConfig()) ? Config.MAX_BULK_API_BATCH_SIZE
-                : Config.MAX_LOAD_BATCH_SIZE;
-        // insert
-        testUpsertAccountsDb(numRows, true);
-        // update
-        testUpsertAccountsDb(numRows, false);
-    }
-
-    private void testUpsertAccountsDb(int numRows, boolean isInsert) throws ParseException,
-    ProcessInitializationException, DataAccessObjectException {
-        testUpsertAccountsDb(null, numRows, isInsert, false);
     }
 
     private void testUpsertAccountsDb(Map<String, String> args, int numRows, boolean isInsert, boolean nullValues)
