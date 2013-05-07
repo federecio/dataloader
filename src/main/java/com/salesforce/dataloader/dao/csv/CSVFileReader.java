@@ -33,7 +33,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 import org.apache.commons.io.IOUtils;
@@ -45,6 +44,7 @@ import com.salesforce.dataloader.controller.Controller;
 import com.salesforce.dataloader.dao.DataReader;
 import com.salesforce.dataloader.exception.DataAccessObjectException;
 import com.salesforce.dataloader.exception.DataAccessObjectInitializationException;
+import com.salesforce.dataloader.exception.DataAccessRowException;
 import com.salesforce.dataloader.model.Row;
 import com.salesforce.dataloader.util.DAORowUtil;
 import com.sforce.async.CSVReader;
@@ -245,16 +245,28 @@ public class CSVFileReader implements DataReader {
             throw new DataAccessObjectException(e);
         }
 
-        if (record == null) {
-            return null; // EOF would be better to use some kind of Null Pattern.
+        if (!DAORowUtil.isValidRow(record)) {
+            return null;       // EOF would be better to use some kind of Null Pattern.
         }
 
         if (record.size() != headerRow.size()) {
-            throw new DataAccessObjectException("Row has invalid number of values, expected " + headerRow.size() + " but actual is " + record.size());
+            String errMsg = Messages
+                    .getFormattedString(
+                            "CSVFileDAO.errorRowTooLarge", new String[] { //$NON-NLS-1$
+                            String.valueOf(currentRowNumber), String.valueOf(record.size()),
+                            String.valueOf(headerRow.size()) });
+            throw new DataAccessRowException(errMsg);
         }
 
         Row row = new Row(record.size());
-        for (Iterator<String> headerIt = headerRow.iterator(), valuesIt = record.iterator(); headerIt.hasNext(); row.put(headerIt.next(), valuesIt.next()));
+
+        for(int i = 0; i < headerRow.size(); i++) {
+            String value = record.get(i);
+            if(value == null) {
+                value = "";
+            }
+            row.put(headerRow.get(i), value);
+        }
         currentRowNumber++;
         return row;
     }
