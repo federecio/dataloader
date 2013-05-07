@@ -116,6 +116,8 @@ public class CSVFileReader implements DataReader {
             close();
         }
 
+        currentRowNumber = 0;
+
         try {
             if (forceUTF8 || isUTF8File(file)) {
                 csvReader = new CSVReader(new FileInputStream(file), "UTF-8");
