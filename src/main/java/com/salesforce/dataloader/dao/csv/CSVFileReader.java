@@ -204,7 +204,7 @@ public class CSVFileReader implements DataReader {
      */
     @Override
     public List<String> getColumnNames() {
-        return Collections.unmodifiableList(headerRow);
+        return headerRow;
     }
 
     /*
