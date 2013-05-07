@@ -26,13 +26,13 @@
 
 package com.salesforce.dataloader.dao.csv;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.commons.io.IOUtils;
@@ -56,11 +56,10 @@ import com.sforce.async.CSVReader;
  */
 public class CSVFileReader implements DataReader {
 
-    private static Logger logger = Logger.getLogger(CSVFileReader.class);
+    private static final Logger LOGGER = Logger.getLogger(CSVFileReader.class);
+    private final Object lock = new Object();
     private File file;
-    private BufferedReader input;
-    // this should store the total rows in the file,
-    // must be set externally, since this class streams the file
+    private FileInputStream input;
     private int totalRows;
     private CSVReader csvReader;
     private int currentRowNumber;
@@ -78,30 +77,7 @@ public class CSVFileReader implements DataReader {
 
     public CSVFileReader(File file, Config config) {
         this.file = file;
-        if (config.isBulkAPIEnabled()) {
-            forceUTF8 = true;
-        } else {
-            forceUTF8 = config.getBoolean(Config.READ_UTF8);
-        }
-    }
-
-    /**
-     * Should the file always be read as UTF8
-     *
-     * @return true if UTF8 format is forced
-     */
-
-    protected boolean isForceUTF8() {
-        return forceUTF8;
-    }
-
-    /**
-     * Sets if the file should always be read as UTF8
-     *
-     * @param utf8Encoded
-     */
-    public void setForceUTF8(boolean utf8Encoded) {
-        this.forceUTF8 = utf8Encoded;
+        forceUTF8 = config.isBulkAPIEnabled() || config.getBoolean(Config.READ_UTF8);
     }
 
     @Override
@@ -112,50 +88,13 @@ public class CSVFileReader implements DataReader {
 
     @Override
     public void open() throws DataAccessObjectInitializationException {
-        if (isOpen()) {
+        if (isOpen) {
             close();
         }
-
         currentRowNumber = 0;
-
-        try {
-            if (forceUTF8 || isUTF8File(file)) {
-                csvReader = new CSVReader(new FileInputStream(file), "UTF-8");
-            } else {
-                csvReader = new CSVReader(new FileInputStream(file));
-            }
-        } catch (FileNotFoundException e) {
-            String errMsg = Messages.getFormattedString("CSVFileDAO.errorOpen", file.getAbsolutePath()); //$NON-NLS-1$
-            logger.error(errMsg, e);
-            throw new DataAccessObjectInitializationException(errMsg, e);
-        } catch (UnsupportedEncodingException e) {
-            logger.error(Messages.getString("CSVFileDAO.errorUnsupportedEncoding"), e); //$NON-NLS-1$
-            throw new DataAccessObjectInitializationException(Messages.getString("CSVFileDAO.errorUnsupportedEncoding"), e); //$NON-NLS-1$
-        }
-
-        try {
-            headerRow = csvReader.nextRecord();
-
-            if (headerRow == null) {
-                logger.error(Messages.getString("CSVFileDAO.errorHeaderRow")); //$NON-NLS-1$
-                throw new DataAccessObjectInitializationException(Messages.getString("CSVFileDAO.errorHeaderRow")); //$NON-NLS-1$
-            }
-
-            // file is open and initialized at this point
-            setOpen(true);
-        } catch (IOException e) {
-            logger.error(Messages.getString("CSVFileDAO.errorHeaderRow")); //$NON-NLS-1$
-            throw new DataAccessObjectInitializationException(Messages.getString("CSVFileDAO.errorHeaderRow")); //$NON-NLS-1$
-        } finally {
-            // if there's a problem getting header row, the stream needs to be closed
-            if (!isOpen()) {
-                try {
-                    input.close();
-                } catch (IOException ignore) {
-                    // ignore exception as this is ok at this point
-                }
-            }
-        }
+        initalizeInput();
+        readHeaderRow();
+        isOpen = true;
     }
 
     /**
@@ -164,24 +103,18 @@ public class CSVFileReader implements DataReader {
     @Override
     public void close() {
         try {
-            if (isOpen() && input != null) {
-                try {
-                    input.close();
-                } catch (IOException ioe) {
-                    logger.error("Error closing file stream.", ioe);
-                }
-            }
+            IOUtils.closeQuietly(input);
         } finally {
             input = null;
             csvReader = null;
-            setOpen(false);
+            isOpen = false;
         }
     }
 
     /**
      * Checks the Bytes for the UTF-8 BOM if found, returns true, else false
      */
-    private boolean isUTF8File(File f) {
+    private boolean isUTF8File(File file) {
 
         FileInputStream stream = null;
 
@@ -189,7 +122,7 @@ public class CSVFileReader implements DataReader {
         // or 239 187 191
 
         try {
-            stream = new FileInputStream(f);
+            stream = new FileInputStream(file);
 
             if (stream.read() == 239) {
                 if (stream.read() == 187) {
@@ -199,19 +132,15 @@ public class CSVFileReader implements DataReader {
                 }
             }
         } catch (FileNotFoundException e) {
-            logger.error("Error in file when testing CSV");
+            LOGGER.error("Error in file when testing CSV");
         } catch (IOException io) {
-            logger.error("IO error when testing file");
+            LOGGER.error("IO error when testing file");
         } finally {
             IOUtils.closeQuietly(stream);
         }
         return false;
     }
 
-    /*
-     * (non-Javadoc)
-     * @see com.salesforce.dataloader.dao.DataReader#readRowList(int)
-     */
     @Override
     public List<Row> readRowList(int maxRows) throws DataAccessObjectException {
         List<Row> outputRows = new ArrayList<Row>();
@@ -228,43 +157,40 @@ public class CSVFileReader implements DataReader {
         return outputRows;
     }
 
-    /*
+    /**
      * Gets the next row from the current data access object data source. <i>Side effect:</i> Updates the current record
      * number
-     * @see com.salesforce.dataloader.dao.DataAccessObject#getNextRow()
      */
     @Override
-    public synchronized Row readRow() throws DataAccessObjectException {
-        // make sure file is open
-        if (!isOpen()) {
+    public Row readRow() throws DataAccessObjectException {
+        if (!isOpen) {
             open();
         }
 
         List<String> record;
-        try {
-            record = csvReader.nextRecord();
-        } catch (IOException e) {
-            throw new DataAccessObjectException(e);
+        synchronized (lock) {
+            try {
+                record = csvReader.nextRecord();
+            } catch (IOException e) {
+                throw new DataAccessObjectException(e);
+            }
         }
 
         if (!DAORowUtil.isValidRow(record)) {
-            return null;       // EOF would be better to use some kind of Null Pattern.
+            return null;
         }
 
-        if (record.size() != headerRow.size()) {
-            String errMsg = Messages
-                    .getFormattedString(
-                            "CSVFileDAO.errorRowTooLarge", new String[] { //$NON-NLS-1$
-                            String.valueOf(currentRowNumber), String.valueOf(record.size()),
-                            String.valueOf(headerRow.size()) });
+        if (record.size() > headerRow.size()) {
+            String errMsg = Messages.getFormattedString("CSVFileDAO.errorRowTooLarge", new String[]{
+                    String.valueOf(currentRowNumber), String.valueOf(record.size()), String.valueOf(headerRow.size())});
             throw new DataAccessRowException(errMsg);
         }
 
         Row row = new Row(record.size());
 
-        for(int i = 0; i < headerRow.size(); i++) {
+        for (int i = 0; i < headerRow.size(); i++) {
             String value = record.get(i);
-            if(value == null) {
+            if (value == null) {
                 value = "";
             }
             row.put(headerRow.get(i), value);
@@ -278,17 +204,18 @@ public class CSVFileReader implements DataReader {
      */
     @Override
     public List<String> getColumnNames() {
-        return headerRow;
+        return Collections.unmodifiableList(headerRow);
     }
 
     /*
-     * (non-Javadoc)
-     * @see com.salesforce.dataloader.dao.DataReader#getTotalRows()
+     * Returns the number of rows in the file. <i>Side effect:</i> Moves the row pointer to the first row
      */
     @Override
     public int getTotalRows() throws DataAccessObjectException {
         if (totalRows == 0) {
-            assert isOpen();
+            if (!isOpen) {
+                throw new IllegalStateException("File is not open");
+            }
             totalRows = DAORowUtil.calculateTotalRows(this);
         }
         return totalRows;
@@ -302,11 +229,47 @@ public class CSVFileReader implements DataReader {
         return currentRowNumber;
     }
 
-    public boolean isOpen() {
-        return isOpen;
+    private void readHeaderRow() throws DataAccessObjectInitializationException {
+        try {
+            synchronized (lock) {
+                headerRow = csvReader.nextRecord();
+            }
+            if (headerRow == null) {
+                LOGGER.error(Messages.getString("CSVFileDAO.errorHeaderRow"));
+                throw new DataAccessObjectInitializationException(Messages.getString("CSVFileDAO.errorHeaderRow"));
+            }
+        } catch (IOException e) {
+            String errMsg = Messages.getString("CSVFileDAO.errorHeaderRow");
+            LOGGER.error(errMsg, e);
+            throw new DataAccessObjectInitializationException(errMsg, e);
+        } finally {
+            // if there's a problem getting header row, the stream needs to be closed
+            if (headerRow == null) {
+                IOUtils.closeQuietly(input);
+            }
+        }
     }
 
-    public void setOpen(boolean isOpen) {
-        this.isOpen = isOpen;
+    private void initalizeInput() throws DataAccessObjectInitializationException {
+        try {
+            input = new FileInputStream(file);
+            if (forceUTF8 || isUTF8File(file)) {
+                csvReader = new CSVReader(input, "UTF-8");
+            } else {
+                csvReader = new CSVReader(input);
+            }
+        } catch (FileNotFoundException e) {
+            String errMsg = Messages.getFormattedString("CSVFileDAO.errorOpen", file.getAbsolutePath());
+            LOGGER.error(errMsg, e);
+            throw new DataAccessObjectInitializationException(errMsg, e);
+        } catch (UnsupportedEncodingException e) {
+            String errMsg = Messages.getString("CSVFileDAO.errorUnsupportedEncoding");
+            LOGGER.error(errMsg, e);
+            throw new DataAccessObjectInitializationException(errMsg, e);
+        } finally {
+            if(csvReader == null) {
+                IOUtils.closeQuietly(input);
+            }
+        }
     }
 }
